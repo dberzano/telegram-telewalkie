@@ -3,6 +3,7 @@ from __future__ import print_function
 from argparse import ArgumentParser
 from requests import get, post
 from requests.exceptions import RequestException
+from pathlib import Path
 from time import sleep, time
 import os
 import subprocess
@@ -150,14 +151,36 @@ if __name__ == "__main__":
                       help="authorized user IDs")
   parser.add_argument("--alsa-device", dest="alsa_device", required=False, default=None,
                       help="ALSA audio device")
+  parser.add_argument("--pidfile", dest="pidfile", required=False, default=None,
+                      help="where to store the PID")
+  parser.add_argument("--logfile", dest="logfile", required=False, default=None,
+                      help="where to store the log")
   args = parser.parse_args()
 
   # Set up logging
   log = logging.getLogger("root")
   log.setLevel(logging.DEBUG if args.debug else logging.INFO)
+  fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s")
   ch = logging.StreamHandler()
-  ch.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
+  ch.setFormatter(fmt)
   log.addHandler(ch)
+  if args.logfile is not None:
+    fh = logging.FileHandler(args.logfile, mode="w")
+    fh.setFormatter(fmt)
+    log.addHandler(fh)
+
+  # Check if another instance is running
+  try:
+    pid = int(Path(args.pidfile).read_text().strip())
+    os.kill(pid, 0)
+    log.info(f"instance of telewalkie running with PID {pid} was found: exiting")
+    sys.exit(0)
+  except Exception:
+    if args.pidfile is not None:
+      log.info(f"no instance of telewalkie was found: continuing - writing PID to {args.pidfile}")
+      Path(args.pidfile).write_text(str(os.getpid()))
+    else:
+      log.warning("no --pidfile was provided, no protection against multiple instances")
 
   token = args.token
   authorized_ids = args.authorized_ids
