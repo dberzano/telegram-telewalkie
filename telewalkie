@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 from requests import get, post
 from requests.exceptions import RequestException
 from time import sleep, time
+import os
 import subprocess
 import json
 import sys
@@ -14,6 +15,8 @@ def runcmd(cmd):
   popen = subprocess.Popen([ "bash", "-c", cmd ],
                          shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
   out = popen.communicate()[0]
+  if isinstance(out, bytes):
+    out = out.decode('utf-8')
   log.debug("play command returned %d" % popen.returncode)
   if popen.returncode != 0:
     for line in out.split("\n"):
@@ -89,7 +92,7 @@ def loop():
         else:
           try:
             fileinfo = api("getFile", params={"file_id": msg["message"]["voice"]["file_id"]})
-          except TypeError,KeyError:
+          except (TypeError,KeyError):
             log.error("cannot get voice file this time")
           else:
             log.info("playing message from %d (%s %s, %s)" %
@@ -97,11 +100,32 @@ def loop():
                       msg["message"]["from"]["first_name"],
                       msg["message"]["from"].get("last_name", "*"),
                       "bot" if msg["message"]["from"]["is_bot"] else "human"))
-            rc = runcmd(("T=$(mktemp -d) && cd $T && " +
-                         "curl -sL https://api.telegram.org/file/bot{token}/{file} > tmp.opus && " +
-                         "opusdec tmp.opus tmp.wav && " +
-                         "( aplay tmp.wav || afplay tmp.wav ) && " +
-                         "cd / && rm -rf $T").format(token=token, file=fileinfo["result"]["file_path"]))
+            file_url = f"https://api.telegram.org/file/bot{token}/{fileinfo['result']['file_path']}"
+            # Read the file in memory, and play it
+            log.debug(f"retrieving audio from URL: {file_url}")
+            areq = get(file_url)
+            areq.raise_for_status()
+            if alsa_device is not None:
+                env_override = dict(os.environ())
+                env_override["AUDIODEV"] = alsa_device
+                env_override["SDL_AUDIODRIVER"] = "alsa"
+                log.debug(f"using ALSA audio device {alsa_device} as per --alsa-device")
+            else:
+                env_override = None
+            try:
+                with subprocess.Popen(["ffplay", "-autoexit", "-nodisp", "-loglevel", "panic", "-"],
+                                      stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT,
+                                      env=env_override) as p:
+                    p.stdin.write(areq.content)
+                    p.stdin.close()
+                    log.debug("ffplay output: " + p.stdout.read().decode('utf-8').rstrip())
+            except FileNotFoundError:
+                log.error("player `ffplay` not found")
+                rc = 1
+            else:
+                rc = p.returncode
             if rc != 0:
               retry = retry + 1
               log.error("error executing play command: retrying %d more times" % (3-retry))
@@ -124,6 +148,8 @@ if __name__ == "__main__":
                       help="Telegram bot token")
   parser.add_argument("--authorized-ids", dest="authorized_ids", required=True, type=int, nargs="+",
                       help="authorized user IDs")
+  parser.add_argument("--alsa-device", dest="alsa_device", required=False, default=None,
+                      help="ALSA audio device")
   args = parser.parse_args()
 
   # Set up logging
@@ -135,5 +161,6 @@ if __name__ == "__main__":
 
   token = args.token
   authorized_ids = args.authorized_ids
+  alsa_device = args.alsa_device
 
   loop()
