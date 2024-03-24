@@ -106,7 +106,7 @@ def loop():
             areq = get(file_url)
             areq.raise_for_status()
             if alsa_device is not None:
-                env_override = dict(os.environ())
+                env_override = dict(os.environ)
                 env_override["AUDIODEV"] = alsa_device
                 env_override["SDL_AUDIODRIVER"] = "alsa"
                 log.debug(f"using ALSA audio device {alsa_device} as per --alsa-device")
