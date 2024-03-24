@@ -155,6 +155,9 @@ if __name__ == "__main__":
                       help="where to store the PID")
   parser.add_argument("--logfile", dest="logfile", required=False, default=None,
                       help="where to store the log")
+  parser.add_argument("--kill-other-instance", dest="kill_other_instance",
+                      default=False, action="store_true",
+                      help="when using --pidfile, this instance has priority and kills the other")
   args = parser.parse_args()
 
   # Set up logging
@@ -164,23 +167,31 @@ if __name__ == "__main__":
   ch = logging.StreamHandler()
   ch.setFormatter(fmt)
   log.addHandler(ch)
-  if args.logfile is not None:
-    fh = logging.FileHandler(args.logfile, mode="w")
-    fh.setFormatter(fmt)
-    log.addHandler(fh)
 
   # Check if another instance is running
   try:
     pid = int(Path(args.pidfile).read_text().strip())
     os.kill(pid, 0)
-    log.info(f"instance of telewalkie running with PID {pid} was found: exiting")
-    sys.exit(0)
+    if args.kill_other_instance:
+      log.warning(f"instance of telewalkie running with PID {pid} was found: killing it")
+      os.kill(pid, 15)
+      os.kill(pid, 9)
+    else:
+      log.info(f"instance of telewalkie running with PID {pid} was found: exiting")
+      sys.exit(0)
   except Exception:
     if args.pidfile is not None:
       log.info(f"no instance of telewalkie was found: continuing - writing PID to {args.pidfile}")
       Path(args.pidfile).write_text(str(os.getpid()))
     else:
       log.warning("no --pidfile was provided, no protection against multiple instances")
+
+  # We are the only instance: we take over file logging
+  if args.logfile is not None:
+    log.debug(f"logging to file too: {args.logfile}")
+    fh = logging.FileHandler(args.logfile, mode="w")
+    fh.setFormatter(fmt)
+    log.addHandler(fh)
 
   token = args.token
   authorized_ids = args.authorized_ids
